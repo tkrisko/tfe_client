@@ -4,11 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	tfe "github.com/hashicorp/go-tfe"
 	"log"
 	"os"
 	"strings"
-
-	tfe "github.com/hashicorp/go-tfe"
 )
 
 type Command string
@@ -100,7 +99,7 @@ func (c *Connection) UpdateWorkspace(name string, options *tfe.WorkspaceUpdateOp
 	if err != nil {
 		return err
 	}
-	_, err = c.Client.Workspaces.Update(ctx, c.Org, w.Name, *options)
+	w, err = c.Client.Workspaces.Update(ctx, c.Org, w.Name, *options)
 	return err
 }
 
@@ -266,7 +265,10 @@ func main() {
 		case string(Get):
 			fmt.Println(client.GetWorkspace(workspaceName))
 		case string(AddRepo):
-			vcsRepo, _ := client.GetVCSProviderFromOAuthClient(oAuthId, branch, repoURL)
+			vcsRepo, err := client.GetVCSProviderFromOAuthClient(oAuthId, branch, repoURL)
+			if err != nil {
+				log.Fatal(err)
+			}
 			options := &tfe.WorkspaceUpdateOptions{
 				VCSRepo: vcsRepo,
 			}
@@ -284,6 +286,8 @@ func main() {
 			if err != nil {
 				log.Fatal(err)
 			}
+		default:
+			flag.Usage()
 		}
 
 	case string(OAuthClient):
@@ -293,6 +297,7 @@ func main() {
 				fmt.Println(w)
 			}
 		}
-
+	default:
+		flag.Usage()
 	}
 }

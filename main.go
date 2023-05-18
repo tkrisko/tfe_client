@@ -2,18 +2,21 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
-	tfe "github.com/hashicorp/go-tfe"
 	"log"
 	"os"
 	"strings"
+
+	tfe "github.com/hashicorp/go-tfe"
 )
 
 type Command string
 
 const (
 	Workspace      Command = "workspace"
+	Run            Command = "run"
 	OAuthClient    Command = "oauth_clients"
 	List           Command = "list"
 	Create         Command = "create"
@@ -22,6 +25,12 @@ const (
 	Get            Command = "get"
 	AddTFEVariable Command = "add_tfe_var"
 	AddEnvVariable Command = "add_env_var"
+	Plan           Command = "plan"
+	Discard        Command = "discard"
+	Apply          Command = "apply"
+	Cancel         Command = "cancel"
+	ListRuns       Command = "list_runs"
+	ApplyStatus    Command = "apply_status"
 )
 
 type Connection struct {
@@ -145,6 +154,129 @@ func (c *Connection) GetVCSProviderFromOAuthClient(clientName string, branch str
 	return vcsrepo, nil
 }
 
+func (c *Connection) RunPlan(name string, message string) (string, error) {
+	w, err := c.ReadWorkspace(name)
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx := context.Background()
+	options := tfe.RunCreateOptions{
+		Workspace: w,
+		Message:   &message,
+	}
+	r, err := c.Client.Runs.Create(ctx, options)
+	return r.ID, err
+}
+
+func (c *Connection) DiscardRun(runID string, message string) error {
+	ctx := context.Background()
+	options := tfe.RunDiscardOptions{
+		Comment: &message,
+	}
+
+	err := c.Client.Runs.Discard(ctx, runID, options)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Connection) CancelRun(runID string, message string) error {
+	ctx := context.Background()
+	options := tfe.RunCancelOptions{
+		Comment: &message,
+	}
+
+	err := c.Client.Runs.Cancel(ctx, runID, options)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Connection) ListRuns(workspaceName string) []byte {
+	ctx := context.Background()
+	w, err := c.ReadWorkspace(workspaceName)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	options := &tfe.RunListOptions{
+		ListOptions: tfe.ListOptions{PageNumber: 1},
+	}
+
+	var rs *tfe.RunList
+	var runs []map[string]string
+	var run map[string]string
+	var js []byte
+	for {
+		rs, err = c.Client.Runs.List(ctx, w.ID, options)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, r := range rs.Items {
+			run = make(map[string]string)
+			run["ID"] = r.ID
+			run["Status"] = string(r.Status)
+			run["CreatedAt"] = fmt.Sprintf("%s", r.CreatedAt)
+			runs = append(runs, run)
+
+		}
+		options.ListOptions.PageNumber = rs.NextPage
+		if rs.NextPage == 0 {
+			break
+		}
+	}
+	js, err = json.Marshal(&runs)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return js
+}
+
+func (c *Connection) GetPlan(runID string) string {
+	ctx := context.Background()
+	r, err := c.Client.Runs.Read(ctx, runID)
+	if err != nil {
+		log.Fatal(err)
+	}
+	p, err := c.Client.Plans.ReadJSONOutput(ctx, r.Plan.ID)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return fmt.Sprintf("%s", p)
+}
+
+func (c *Connection) ApplyRun(runID string, message string) error {
+	ctx := context.Background()
+	options := tfe.RunApplyOptions{
+		Comment: &message,
+	}
+
+	err := c.Client.Runs.Apply(ctx, runID, options)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Connection) GetApply(runID string) string {
+	ctx := context.Background()
+	r, err := c.Client.Runs.Read(ctx, runID)
+	if err != nil {
+		log.Fatal(err)
+	}
+	a, err := c.Client.Applies.Read(ctx, r.Apply.ID)
+	if err != nil {
+		log.Fatal(err)
+	}
+	js, err := json.Marshal(a)
+	return fmt.Sprintf("%s", js)
+}
+
 func (c *Connection) addTerraformVariable(name *string, wsName *string, value *string, description *string, hcl *bool, sensitive *bool, category *tfe.CategoryType) (*tfe.Variable, error) {
 	ctx := context.Background()
 	options := &tfe.VariableCreateOptions{
@@ -176,7 +308,7 @@ func main() {
 	var command, subCommand string
 	var help = flag.Bool("help", false, "Show help")
 	var workspaceName, workingDir, oAuthId, branch, repoURL string
-	var varDescription, varName, varValue string
+	var varDescription, varName, varValue, msg, planID string
 	var isHCL, isSensitive bool
 
 	flag.StringVar(&tfeURL, "tfe_url", os.Getenv("TFE_URL"), "Terraform organization. TFE_URL environment variable or given flag")
@@ -192,6 +324,8 @@ func main() {
 	flag.StringVar(&varName, "var_name", "", "Variable name")
 	flag.StringVar(&varDescription, "var_description", "", "Variable description")
 	flag.StringVar(&varValue, "var_value", "", "Variable value")
+	flag.StringVar(&msg, "message", "", "Plan messages")
+	flag.StringVar(&planID, "plan_id", "", "Plan id")
 
 	flag.Usage = func() {
 		message := fmt.Sprintf("Usage of %s:\n", os.Args[0])
@@ -286,6 +420,12 @@ func main() {
 			if err != nil {
 				log.Fatal(err)
 			}
+		case string(Plan):
+			id, err := client.RunPlan(workspaceName, msg)
+			if err != nil {
+				log.Fatal(err)
+			}
+			fmt.Printf("Plan id %s started\n", id)
 		default:
 			flag.Usage()
 		}
@@ -296,6 +436,35 @@ func main() {
 			for _, w := range client.ListOAuthClients() {
 				fmt.Println(w)
 			}
+		}
+	case string(Run):
+		switch subCommand {
+		case string(Discard):
+			err := client.DiscardRun(planID, msg)
+			if err != nil {
+				log.Fatal(err)
+			}
+			log.Printf("Run id %s discarded\n", planID)
+		case string(Cancel):
+			err := client.CancelRun(planID, msg)
+			if err != nil {
+				log.Fatal(err)
+			}
+			log.Printf("Run id %s cancelled\n", planID)
+		case string(Get):
+			fmt.Println(client.GetPlan(planID))
+		case string(ApplyStatus):
+			fmt.Println(client.GetApply(planID))
+		case string(Apply):
+			err := client.ApplyRun(planID, msg)
+			if err != nil {
+				log.Fatal(err)
+			}
+			log.Printf("Run id %s applied\n", planID)
+		case string(List):
+			fmt.Printf("%s", client.ListRuns(workspaceName))
+		default:
+			flag.Usage()
 		}
 	default:
 		flag.Usage()

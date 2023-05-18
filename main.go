@@ -89,17 +89,29 @@ func (c *Connection) ReadWorkspace(name string) (*tfe.Workspace, error) {
 	return c.Client.Workspaces.Read(ctx, c.Org, name)
 }
 
-func (c *Connection) GetWorkspace(name string) string {
+func (c *Connection) GetWorkspace(name string) []byte {
 	ws, err := c.ReadWorkspace(name)
 	if err != nil {
 		log.Fatal(err)
 	}
+	var wsMap map[string]interface{}
+	var js []byte
 	var branch, repo_identifier string
-	if ws.VCSRepo == nil {
-		branch = "undef"
-		repo_identifier = "undef"
+	wsMap = make(map[string]interface{})
+	if ws.VCSRepo != nil {
+		branch = ws.VCSRepo.Branch
+		repo_identifier = ws.VCSRepo.Identifier
 	}
-	return fmt.Sprintf("%s %s %s %s", ws.Name, ws.WorkingDirectory, branch, repo_identifier)
+	wsMap["Name"] = ws.Name
+	wsMap["WorkingDirectory"] = ws.WorkingDirectory
+	wsMap["Branch"] = branch
+	wsMap["RepoID"] = repo_identifier
+	wsMap["Locked"] = ws.Locked
+	js, err = json.Marshal(wsMap)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return js
 }
 
 func (c *Connection) UpdateWorkspace(name string, options *tfe.WorkspaceUpdateOptions) error {
@@ -397,7 +409,7 @@ func main() {
 		case string(Create):
 			client.CreateWorkspace(workspaceName, workingDir)
 		case string(Get):
-			fmt.Println(client.GetWorkspace(workspaceName))
+			fmt.Printf("%s", client.GetWorkspace(workspaceName))
 		case string(AddRepo):
 			vcsRepo, err := client.GetVCSProviderFromOAuthClient(oAuthId, branch, repoURL)
 			if err != nil {

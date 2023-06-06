@@ -17,7 +17,7 @@ type Command string
 const (
 	Workspace      Command = "workspace"
 	Run            Command = "run"
-	OAuthClient    Command = "oauth_clients"
+	OAuthClient    Command = "oauth_client"
 	List           Command = "list"
 	Create         Command = "create"
 	Delete         Command = "delete"
@@ -124,28 +124,37 @@ func (c *Connection) UpdateWorkspace(name string, options *tfe.WorkspaceUpdateOp
 	return err
 }
 
-func (c *Connection) ListOAuthClients() []string {
+func (c *Connection) ListOAuthClients() []byte {
 	ctx := context.Background()
 	options := &tfe.OAuthClientListOptions{
 		ListOptions: tfe.ListOptions{PageNumber: 1},
 	}
 	var err error
 	var ts *tfe.OAuthClientList
-	var oAuthClients []string
+	var clients []map[string]string
+	var client map[string]string
+	var js []byte
 	for {
 		ts, err = c.Client.OAuthClients.List(ctx, c.Org, options)
 		if err != nil {
 			log.Fatal(err)
 		}
 		for _, t := range ts.Items {
-			oAuthClients = append(oAuthClients, fmt.Sprintf("%s %s", *t.Name, t.ID))
+			client = make(map[string]string)
+			client["Name"] = *t.Name
+			client["Id"] = t.ID
+			clients = append(clients, client)
 		}
 		options.ListOptions.PageNumber = ts.NextPage
 		if ts.NextPage == 0 {
 			break
 		}
 	}
-	return oAuthClients
+	js, err = json.Marshal(&clients)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return js
 }
 
 func (c *Connection) ReadOAuthClient(name string) (*tfe.OAuthClient, error) {
@@ -248,7 +257,7 @@ func (c *Connection) ListRuns(workspaceName string) []byte {
 	return js
 }
 
-func (c *Connection) GetPlan(runID string) string {
+func (c *Connection) GetPlan(runID string) []byte {
 	ctx := context.Background()
 	r, err := c.Client.Runs.Read(ctx, runID)
 	if err != nil {
@@ -258,7 +267,7 @@ func (c *Connection) GetPlan(runID string) string {
 	if err != nil {
 		log.Fatal(err)
 	}
-	return fmt.Sprintf("%s", p)
+	return p
 }
 
 func (c *Connection) ApplyRun(runID string, message string) error {
@@ -275,7 +284,7 @@ func (c *Connection) ApplyRun(runID string, message string) error {
 	return nil
 }
 
-func (c *Connection) GetApply(runID string) string {
+func (c *Connection) GetApply(runID string) []byte {
 	ctx := context.Background()
 	r, err := c.Client.Runs.Read(ctx, runID)
 	if err != nil {
@@ -286,7 +295,10 @@ func (c *Connection) GetApply(runID string) string {
 		log.Fatal(err)
 	}
 	js, err := json.Marshal(a)
-	return fmt.Sprintf("%s", js)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return js
 }
 
 func (c *Connection) addTerraformVariable(name *string, wsName *string, value *string, description *string, hcl *bool, sensitive *bool, category *tfe.CategoryType) (*tfe.Variable, error) {
@@ -364,6 +376,7 @@ func main() {
 		message = message + (fmt.Sprintf("  -tfe_url\n\t%s\n", flag.CommandLine.Lookup("tfe_url").Usage))
 		message = message + (fmt.Sprintf("  -tfe_org\n\t%s\n", flag.CommandLine.Lookup("tfe_org").Usage))
 		message = message + (fmt.Sprintf("  -tfe_token\n\t%s\n", flag.CommandLine.Lookup("tfe_token").Usage))
+		message = message + (fmt.Sprintf("  oauth_client list - List oAuthClients\n"))
 
 		fmt.Println(message)
 	}
@@ -437,7 +450,7 @@ func main() {
 			if err != nil {
 				log.Fatal(err)
 			}
-			fmt.Printf("Plan id %s started\n", id)
+			fmt.Printf("{\"RunID\": \"%s\", \"Status\": \"planning\"}", id)
 		default:
 			flag.Usage()
 		}
@@ -445,9 +458,8 @@ func main() {
 	case string(OAuthClient):
 		switch subCommand {
 		case string(List):
-			for _, w := range client.ListOAuthClients() {
-				fmt.Println(w)
-			}
+			w := client.ListOAuthClients()
+			fmt.Printf("%s", w)
 		}
 	case string(Run):
 		switch subCommand {
@@ -464,9 +476,9 @@ func main() {
 			}
 			log.Printf("Run id %s cancelled\n", planID)
 		case string(Get):
-			fmt.Println(client.GetPlan(planID))
+			fmt.Printf("%s", client.GetPlan(planID))
 		case string(ApplyStatus):
-			fmt.Println(client.GetApply(planID))
+			fmt.Printf("%s", client.GetApply(planID))
 		case string(Apply):
 			err := client.ApplyRun(planID, msg)
 			if err != nil {

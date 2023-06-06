@@ -1,5 +1,4 @@
 module tfe-client
-
 go 1.17
 
 require github.com/hashicorp/go-tfe v1.23.0

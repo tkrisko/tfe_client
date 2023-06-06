@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -31,6 +32,16 @@ const (
 	Cancel         Command = "cancel"
 	ListRuns       Command = "list_runs"
 	ApplyStatus    Command = "apply_status"
+	Logs           Command = "logs"
+	ApplyLogs      Command = "apply_logs"
+	PlanLogs       Command = "plan_logs"
+)
+
+type LogOperation string
+
+const (
+	plan  LogOperation = "plan"
+	apply              = "plan"
 )
 
 type Connection struct {
@@ -301,6 +312,53 @@ func (c *Connection) GetApply(runID string) []byte {
 	return js
 }
 
+func (c *Connection) GetLogs(runID string, operation LogOperation) []byte {
+	ctx := context.Background()
+	r, err := c.Client.Runs.Read(ctx, runID)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var logs io.Reader
+	if operation == "plan" {
+		logs, err = c.Client.Plans.Logs(ctx, r.Plan.ID)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	if operation == "apply" {
+		logs, err = c.Client.Applies.Logs(ctx, r.Apply.ID)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	return ParseLogs(logs, runID)
+}
+
+func ParseLogs(logs io.Reader, runID string) []byte {
+	var l string
+	buffer := make([]byte, 1000)
+	for {
+		n, err := logs.Read(buffer)
+		l = fmt.Sprintf("%s%s", l, buffer[:n])
+		if err == io.EOF {
+			break
+		}
+	}
+	type Logs struct {
+		ID   string
+		Logs string
+	}
+	ls := &Logs{
+		ID:   runID,
+		Logs: l,
+	}
+	js, err := json.Marshal(ls)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return js
+}
+
 func (c *Connection) addTerraformVariable(name *string, wsName *string, value *string, description *string, hcl *bool, sensitive *bool, category *tfe.CategoryType) (*tfe.Variable, error) {
 	ctx := context.Background()
 	options := &tfe.VariableCreateOptions{
@@ -377,7 +435,12 @@ func main() {
 		message = message + (fmt.Sprintf("  -tfe_org\n\t%s\n", flag.CommandLine.Lookup("tfe_org").Usage))
 		message = message + (fmt.Sprintf("  -tfe_token\n\t%s\n", flag.CommandLine.Lookup("tfe_token").Usage))
 		message = message + (fmt.Sprintf("  oauth_client list - List oAuthClients\n"))
-
+		message = message + (fmt.Sprintf("  run\n"))
+		message = message + (fmt.Sprintf("    get --plan_id\n\t%s\n", flag.CommandLine.Lookup("plan_id").Usage))
+		message = message + (fmt.Sprintf("    apply --plan_id\n\t%s\n", flag.CommandLine.Lookup("plan_id").Usage))
+		message = message + (fmt.Sprintf("    apply_status --plan_id\n\t%s\n", flag.CommandLine.Lookup("plan_id").Usage))
+		message = message + (fmt.Sprintf("    plan_logs --plan_id\n\t%s\n", flag.CommandLine.Lookup("plan_id").Usage))
+		message = message + (fmt.Sprintf("    apply_logs --plan_id\n\t%s\n", flag.CommandLine.Lookup("plan_id").Usage))
 		fmt.Println(message)
 	}
 	//remove commands before parsing flags
@@ -479,6 +542,10 @@ func main() {
 			fmt.Printf("%s", client.GetPlan(planID))
 		case string(ApplyStatus):
 			fmt.Printf("%s", client.GetApply(planID))
+		case string(ApplyLogs):
+			fmt.Printf("%s", client.GetLogs(planID, "apply"))
+		case string(PlanLogs):
+			fmt.Printf("%s", client.GetLogs(planID, "plan"))
 		case string(Apply):
 			err := client.ApplyRun(planID, msg)
 			if err != nil {

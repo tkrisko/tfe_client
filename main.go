@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -16,25 +17,26 @@ import (
 type Command string
 
 const (
-	Workspace      Command = "workspace"
-	Run            Command = "run"
-	OAuthClient    Command = "oauth_client"
-	List           Command = "list"
-	Create         Command = "create"
-	Delete         Command = "delete"
-	AddRepo        Command = "add_repo"
-	Get            Command = "get"
-	AddTFEVariable Command = "add_tfe_var"
-	AddEnvVariable Command = "add_env_var"
-	Plan           Command = "plan"
-	Discard        Command = "discard"
-	Apply          Command = "apply"
-	Cancel         Command = "cancel"
-	ListRuns       Command = "list_runs"
-	ApplyStatus    Command = "apply_status"
-	Logs           Command = "logs"
-	ApplyLogs      Command = "apply_logs"
-	PlanLogs       Command = "plan_logs"
+	Workspace         Command = "workspace"
+	Run               Command = "run"
+	OAuthClient       Command = "oauth_client"
+	List              Command = "list"
+	Create            Command = "create"
+	Delete            Command = "delete"
+	AddRepo           Command = "add_repo"
+	Get               Command = "get"
+	AddTFEVariable    Command = "add_tfe_var"
+	AddEnvVariable    Command = "add_env_var"
+	Plan              Command = "plan"
+	Discard           Command = "discard"
+	Apply             Command = "apply"
+	Cancel            Command = "cancel"
+	ListRuns          Command = "list_runs"
+	ApplyStatus       Command = "apply_status"
+	Logs              Command = "logs"
+	ApplyLogs         Command = "apply_logs"
+	PlanLogs          Command = "plan_logs"
+	AssignVariableSet Command = "assign_variable_set"
 )
 
 type LogOperation string
@@ -385,12 +387,65 @@ func (c *Connection) AddEnvironmentVariable(name string, wsName string, value st
 	return err
 }
 
+func (c *Connection) GetVarialbeSetByName(name string) (*tfe.VariableSet, error) {
+	ctx := context.Background()
+	options := &tfe.VariableSetListOptions{
+		ListOptions: tfe.ListOptions{PageNumber: 1},
+	}
+	for {
+		vss, err := c.Client.VariableSets.List(ctx, c.Org, options)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, r := range vss.Items {
+			if r.Name == name {
+				return r, nil
+			}
+		}
+		options.ListOptions.PageNumber = vss.NextPage
+		if vss.NextPage == 0 {
+			break
+		}
+	}
+	return nil, errors.New("Not found")
+}
+
+func (c *Connection) AssignVariableSet(workspace string, variableSet string) error {
+	w, err := c.ReadWorkspace(workspace)
+	ctx := context.Background()
+	if err != nil {
+		return err
+	}
+	var ws []*tfe.Workspace
+	ws = make([]*tfe.Workspace, 1)
+	ws[0] = w
+	options := &tfe.VariableSetApplyToWorkspacesOptions{
+		Workspaces: ws,
+	}
+	vs, err := c.GetVarialbeSetByName(variableSet)
+	err = c.Client.VariableSets.ApplyToWorkspaces(ctx, vs.ID, options)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Connection) ReadVariableSet(variableSet string) []byte {
+	vs, err := c.GetVarialbeSetByName(variableSet)
+	js, err := json.Marshal(vs)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return js
+
+}
+
 func main() {
 	var tfeURL, tfeToken, tfeOrg string
 	var command, subCommand string
 	var help = flag.Bool("help", false, "Show help")
 	var workspaceName, workingDir, oAuthId, branch, repoURL string
-	var varDescription, varName, varValue, msg, planID string
+	var varDescription, varName, varValue, msg, planID, variableSet string
 	var isHCL, isSensitive bool
 
 	flag.StringVar(&tfeURL, "tfe_url", os.Getenv("TFE_URL"), "Terraform organization. TFE_URL environment variable or given flag")
@@ -408,12 +463,14 @@ func main() {
 	flag.StringVar(&varValue, "var_value", "", "Variable value")
 	flag.StringVar(&msg, "message", "", "Plan messages")
 	flag.StringVar(&planID, "plan_id", "", "Plan id")
+	flag.StringVar(&variableSet, "variable_set", "", "Variable set")
 
 	flag.Usage = func() {
 		message := fmt.Sprintf("Usage of %s:\n", os.Args[0])
-		message = message + (fmt.Sprintf("  workspace [create|list|get]\n"))
+		message = message + (fmt.Sprintf("  workspace [create|list|get|assign_variable_set]\n"))
 		message = message + (fmt.Sprintf("    -workspace_name\n\t%s\n", flag.CommandLine.Lookup("workspace_name").Usage))
 		message = message + (fmt.Sprintf("    -work_dir\n\t%s\n", flag.CommandLine.Lookup("work_dir").Usage))
+		message = message + (fmt.Sprintf("    -assign_variable_set\n\t%s\n", flag.CommandLine.Lookup("variable_set").Usage))
 		message = message + (fmt.Sprintf("  add_repo\n"))
 		message = message + (fmt.Sprintf("    -workspace_name.\n\t%s\n", flag.CommandLine.Lookup("workspace_name").Usage))
 		message = message + (fmt.Sprintf("    -branch\n\t%s\n", flag.CommandLine.Lookup("branch").Usage))
@@ -514,6 +571,12 @@ func main() {
 				log.Fatal(err)
 			}
 			fmt.Printf("{\"RunID\": \"%s\", \"Status\": \"planning\"}", id)
+		case string(AssignVariableSet):
+			err := client.AssignVariableSet(workspaceName, variableSet)
+			if err != nil {
+				log.Fatal(err)
+			}
+			fmt.Printf("%s", client.ReadVariableSet(variableSet))
 		default:
 			flag.Usage()
 		}

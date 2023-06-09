@@ -423,6 +423,9 @@ func (c *Connection) AssignVariableSet(workspace string, variableSet string) err
 		Workspaces: ws,
 	}
 	vs, err := c.GetVarialbeSetByName(variableSet)
+	if err != nil {
+		return err
+	}
 	err = c.Client.VariableSets.ApplyToWorkspaces(ctx, vs.ID, options)
 	if err != nil {
 		return err

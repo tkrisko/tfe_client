@@ -597,13 +597,13 @@ func main() {
 			if err != nil {
 				log.Fatal(err)
 			}
-			log.Printf("Run id %s discarded\n", planID)
+			fmt.Printf("{\"RunID\": \"%s\", \"Status\": \"discarded\"}", planID)
 		case string(Cancel):
 			err := client.CancelRun(planID, msg)
 			if err != nil {
 				log.Fatal(err)
 			}
-			log.Printf("Run id %s cancelled\n", planID)
+			fmt.Printf("{\"RunID\": \"%s\", \"Status\": \"canceled\"}", planID)
 		case string(Get):
 			fmt.Printf("%s", client.GetPlan(planID))
 		case string(ApplyStatus):
@@ -617,7 +617,7 @@ func main() {
 			if err != nil {
 				log.Fatal(err)
 			}
-			log.Printf("Run id %s applied\n", planID)
+			fmt.Printf("{\"RunID\": \"%s\", \"Status\": \"applying\"}", planID)
 		case string(List):
 			fmt.Printf("%s", client.ListRuns(workspaceName))
 		default:

@@ -188,7 +188,7 @@ func (c *Connection) GetVCSProviderFromOAuthClient(clientName string, branch str
 	return vcsrepo, nil
 }
 
-func (c *Connection) RunPlan(name string, message string) (string, error) {
+func (c *Connection) RunPlan(name string, message string, refresh bool) (string, error) {
 	w, err := c.ReadWorkspace(name)
 	if err != nil {
 		log.Fatal(err)
@@ -197,6 +197,7 @@ func (c *Connection) RunPlan(name string, message string) (string, error) {
 	options := tfe.RunCreateOptions{
 		Workspace: w,
 		Message:   &message,
+		Refresh:   tfe.Bool(refresh),
 	}
 	r, err := c.Client.Runs.Create(ctx, options)
 	return r.ID, err
@@ -449,7 +450,7 @@ func main() {
 	var help = flag.Bool("help", false, "Show help")
 	var workspaceName, workingDir, oAuthId, branch, repoURL string
 	var varDescription, varName, varValue, msg, planID, variableSet string
-	var isHCL, isSensitive bool
+	var isHCL, isSensitive, refresh bool
 
 	flag.StringVar(&tfeURL, "tfe_url", os.Getenv("TFE_URL"), "Terraform organization. TFE_URL environment variable or given flag")
 	flag.StringVar(&tfeToken, "tfe_token", os.Getenv("TFE_TOKEN"), "Terraform token. Terraform token. TFE_TOKEN environment variable or given flag")
@@ -467,13 +468,15 @@ func main() {
 	flag.StringVar(&msg, "message", "", "Plan messages")
 	flag.StringVar(&planID, "plan_id", "", "Plan id")
 	flag.StringVar(&variableSet, "variable_set", "", "Variable set")
+	flag.BoolVar(&refresh, "refresh", false, "Refresh prior planning")
 
 	flag.Usage = func() {
 		message := fmt.Sprintf("Usage of %s:\n", os.Args[0])
-		message = message + (fmt.Sprintf("  workspace [create|list|get|assign_variable_set]\n"))
+		message = message + (fmt.Sprintf("  workspace [create|list|get|assign_variable_set|plan]\n"))
 		message = message + (fmt.Sprintf("    -workspace_name\n\t%s\n", flag.CommandLine.Lookup("workspace_name").Usage))
 		message = message + (fmt.Sprintf("    -work_dir\n\t%s\n", flag.CommandLine.Lookup("work_dir").Usage))
 		message = message + (fmt.Sprintf("    -assign_variable_set\n\t%s\n", flag.CommandLine.Lookup("variable_set").Usage))
+		message = message + (fmt.Sprintf("    -refresh\n\t%s\n", flag.CommandLine.Lookup("refresh").Usage))
 		message = message + (fmt.Sprintf("  add_repo\n"))
 		message = message + (fmt.Sprintf("    -workspace_name.\n\t%s\n", flag.CommandLine.Lookup("workspace_name").Usage))
 		message = message + (fmt.Sprintf("    -branch\n\t%s\n", flag.CommandLine.Lookup("branch").Usage))
@@ -569,7 +572,7 @@ func main() {
 				log.Fatal(err)
 			}
 		case string(Plan):
-			id, err := client.RunPlan(workspaceName, msg)
+			id, err := client.RunPlan(workspaceName, msg, refresh)
 			if err != nil {
 				log.Fatal(err)
 			}

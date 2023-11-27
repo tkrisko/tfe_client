@@ -59,28 +59,45 @@ func NewConnection(config *tfe.Config, org string) (*Connection, error) {
 	}, err
 }
 
-func (c *Connection) ListWorkspaces() []string {
+func (c *Connection) ListWorkspaces() []byte {
 	ctx := context.Background()
 	var ws *tfe.WorkspaceList
 	var err error
 	options := &tfe.WorkspaceListOptions{
 		ListOptions: tfe.ListOptions{PageNumber: 1},
 	}
-	var workspaces []string
+
+	var workspaces []interface{}
+
 	for {
+
 		ws, err = c.Client.Workspaces.List(ctx, c.Org, options)
 		if err != nil {
 			log.Fatal(err)
 		}
+
 		for _, w := range ws.Items {
-			workspaces = append(workspaces, w.Name)
+			workspace := make(map[string]string)
+			workspace["Id"] = w.ID
+			workspace["Name"] = w.Name
+			workspaces = append(workspaces, workspace)
 		}
 		options.ListOptions.PageNumber = ws.NextPage
 		if ws.NextPage == 0 {
 			break
 		}
 	}
-	return workspaces
+	type Worspaces struct {
+		Workspaces []interface{}
+	}
+	wsStruct := &Worspaces{
+		Workspaces: workspaces,
+	}
+	js, err := json.Marshal(wsStruct)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return js
 }
 
 func (c *Connection) CreateWorkspace(name string, workingDir string) {
@@ -243,8 +260,8 @@ func (c *Connection) ListRuns(workspaceName string) []byte {
 	}
 
 	var rs *tfe.RunList
-	var runs []map[string]string
-	var run map[string]string
+	var runs []map[string]interface{}
+	var run map[string]interface{}
 	var js []byte
 	for {
 		rs, err = c.Client.Runs.List(ctx, w.ID, options)
@@ -252,12 +269,11 @@ func (c *Connection) ListRuns(workspaceName string) []byte {
 			log.Fatal(err)
 		}
 		for _, r := range rs.Items {
-			run = make(map[string]string)
-			run["ID"] = r.ID
+			run = make(map[string]interface{})
+			run["Id"] = r.ID
 			run["Status"] = string(r.Status)
 			run["CreatedAt"] = fmt.Sprintf("%s", r.CreatedAt)
 			runs = append(runs, run)
-
 		}
 		options.ListOptions.PageNumber = rs.NextPage
 		if rs.NextPage == 0 {
@@ -477,6 +493,7 @@ func main() {
 		message = message + (fmt.Sprintf("    -work_dir\n\t%s\n", flag.CommandLine.Lookup("work_dir").Usage))
 		message = message + (fmt.Sprintf("    -assign_variable_set\n\t%s\n", flag.CommandLine.Lookup("variable_set").Usage))
 		message = message + (fmt.Sprintf("    -refresh\n\t%s\n", flag.CommandLine.Lookup("refresh").Usage))
+		message = message + (fmt.Sprintf("    -list\n\t%s\n"))
 		message = message + (fmt.Sprintf("  add_repo\n"))
 		message = message + (fmt.Sprintf("    -workspace_name.\n\t%s\n", flag.CommandLine.Lookup("workspace_name").Usage))
 		message = message + (fmt.Sprintf("    -branch\n\t%s\n", flag.CommandLine.Lookup("branch").Usage))
@@ -504,6 +521,7 @@ func main() {
 		message = message + (fmt.Sprintf("    apply_status --plan_id\n\t%s\n", flag.CommandLine.Lookup("plan_id").Usage))
 		message = message + (fmt.Sprintf("    plan_logs --plan_id\n\t%s\n", flag.CommandLine.Lookup("plan_id").Usage))
 		message = message + (fmt.Sprintf("    apply_logs --plan_id\n\t%s\n", flag.CommandLine.Lookup("plan_id").Usage))
+		message = message + (fmt.Sprintf("    list --workspace_name\n\t%s\n", flag.CommandLine.Lookup("workspace_name").Usage))
 		fmt.Println(message)
 	}
 	//remove commands before parsing flags
@@ -542,9 +560,8 @@ func main() {
 	case string(Workspace):
 		switch subCommand {
 		case string(List):
-			for _, w := range client.ListWorkspaces() {
-				fmt.Println(w)
-			}
+			w := client.ListWorkspaces()
+			fmt.Printf("%s", w)
 		case string(Create):
 			client.CreateWorkspace(workspaceName, workingDir)
 		case string(Get):

@@ -100,6 +100,28 @@ func (c *Connection) ListWorkspaces() []byte {
 	return js
 }
 
+func (c *Connection) DeleteWorkspace(name string) []byte {
+	ctx := context.Background()
+	// Delete workspace
+	err := c.Client.Workspaces.Delete(ctx, c.Org, name)
+	if err != nil {
+		log.Fatal(err)
+	}
+	type Delete struct {
+		Action string
+		Name   string
+	}
+	ls := &Delete{
+		Action: "Delete",
+		Name:   name,
+	}
+	js, err := json.Marshal(ls)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return js
+}
+
 func (c *Connection) CreateWorkspace(name string, workingDir string) {
 	ctx := context.Background()
 	// Create a new workspace
@@ -150,7 +172,7 @@ func (c *Connection) UpdateWorkspace(name string, options *tfe.WorkspaceUpdateOp
 	if err != nil {
 		return err
 	}
-	w, err = c.Client.Workspaces.Update(ctx, c.Org, w.Name, *options)
+	_, err = c.Client.Workspaces.Update(ctx, c.Org, w.Name, *options)
 	return err
 }
 
@@ -205,7 +227,7 @@ func (c *Connection) GetVCSProviderFromOAuthClient(clientName string, branch str
 	return vcsrepo, nil
 }
 
-func (c *Connection) RunPlan(name string, message string, refresh bool) (string, error) {
+func (c *Connection) RunPlan(name string, message string, refresh bool, isDestroy bool) (string, error) {
 	w, err := c.ReadWorkspace(name)
 	if err != nil {
 		log.Fatal(err)
@@ -215,6 +237,7 @@ func (c *Connection) RunPlan(name string, message string, refresh bool) (string,
 		Workspace: w,
 		Message:   &message,
 		Refresh:   tfe.Bool(refresh),
+		IsDestroy: tfe.Bool(isDestroy),
 	}
 	r, err := c.Client.Runs.Create(ctx, options)
 	return r.ID, err
@@ -433,8 +456,7 @@ func (c *Connection) AssignVariableSet(workspace string, variableSet string) err
 	if err != nil {
 		return err
 	}
-	var ws []*tfe.Workspace
-	ws = make([]*tfe.Workspace, 1)
+	var ws []*tfe.Workspace = make([]*tfe.Workspace, 1)
 	ws[0] = w
 	options := &tfe.VariableSetApplyToWorkspacesOptions{
 		Workspaces: ws,
@@ -452,6 +474,9 @@ func (c *Connection) AssignVariableSet(workspace string, variableSet string) err
 
 func (c *Connection) ReadVariableSet(variableSet string) []byte {
 	vs, err := c.GetVarialbeSetByName(variableSet)
+	if err != nil {
+		log.Fatal(err)
+	}
 	js, err := json.Marshal(vs)
 	if err != nil {
 		log.Fatal(err)
@@ -466,7 +491,7 @@ func main() {
 	var help = flag.Bool("help", false, "Show help")
 	var workspaceName, workingDir, oAuthId, branch, repoURL string
 	var varDescription, varName, varValue, msg, planID, variableSet string
-	var isHCL, isSensitive, refresh bool
+	var isHCL, isSensitive, refresh, isDestroy bool
 
 	flag.StringVar(&tfeURL, "tfe_url", os.Getenv("TFE_URL"), "Terraform organization. TFE_URL environment variable or given flag")
 	flag.StringVar(&tfeToken, "tfe_token", os.Getenv("TFE_TOKEN"), "Terraform token. Terraform token. TFE_TOKEN environment variable or given flag")
@@ -485,15 +510,17 @@ func main() {
 	flag.StringVar(&planID, "plan_id", "", "Plan id")
 	flag.StringVar(&variableSet, "variable_set", "", "Variable set")
 	flag.BoolVar(&refresh, "refresh", false, "Refresh prior planning")
+	flag.BoolVar(&isDestroy, "destroy", false, "Is destroy plan")
 
 	flag.Usage = func() {
 		message := fmt.Sprintf("Usage of %s:\n", os.Args[0])
-		message = message + (fmt.Sprintf("  workspace [create|list|get|assign_variable_set|plan]\n"))
+		message = message + (fmt.Sprintf("  workspace [create|list|get|assign_variable_set|plan|delete]\n"))
 		message = message + (fmt.Sprintf("    -workspace_name\n\t%s\n", flag.CommandLine.Lookup("workspace_name").Usage))
 		message = message + (fmt.Sprintf("    -work_dir\n\t%s\n", flag.CommandLine.Lookup("work_dir").Usage))
 		message = message + (fmt.Sprintf("    -assign_variable_set\n\t%s\n", flag.CommandLine.Lookup("variable_set").Usage))
 		message = message + (fmt.Sprintf("    -refresh\n\t%s\n", flag.CommandLine.Lookup("refresh").Usage))
 		message = message + (fmt.Sprintf("    -list\n\t%s\n"))
+		message = message + (fmt.Sprintf("    -destroy\n\t%s\n", flag.CommandLine.Lookup("destroy").Usage))
 		message = message + (fmt.Sprintf("  add_repo\n"))
 		message = message + (fmt.Sprintf("    -workspace_name.\n\t%s\n", flag.CommandLine.Lookup("workspace_name").Usage))
 		message = message + (fmt.Sprintf("    -branch\n\t%s\n", flag.CommandLine.Lookup("branch").Usage))
@@ -564,6 +591,8 @@ func main() {
 			fmt.Printf("%s", w)
 		case string(Create):
 			client.CreateWorkspace(workspaceName, workingDir)
+		case string(Delete):
+			client.DeleteWorkspace(workspaceName)
 		case string(Get):
 			fmt.Printf("%s", client.GetWorkspace(workspaceName))
 		case string(AddRepo):
@@ -589,7 +618,7 @@ func main() {
 				log.Fatal(err)
 			}
 		case string(Plan):
-			id, err := client.RunPlan(workspaceName, msg, refresh)
+			id, err := client.RunPlan(workspaceName, msg, refresh, isDestroy)
 			if err != nil {
 				log.Fatal(err)
 			}
